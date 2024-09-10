@@ -1,6 +1,6 @@
 import Category from "../models/Category.js";
 import Product from "../models/Product.js";
-import {  deleteFile } from "../utils.js";
+import { deleteFile } from "../utils.js";
 import path from "path";
 import fs from "fs";
 
@@ -110,7 +110,7 @@ export const getProducts = async (req, res) => {
       return res.status(200).send(products);
     }
 
-    const products = await Product.find();
+    const products = await Product.find().populate("category").lean();
     res.status(200).send(products);
   } catch (error) {
     res.status(500).send(error);
