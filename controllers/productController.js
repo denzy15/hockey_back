@@ -1,8 +1,6 @@
 import Category from "../models/Category.js";
 import Product from "../models/Product.js";
-import { deleteFile } from "../utils.js";
-import path from "path";
-import fs from "fs";
+import { deleteImageFromCloudinary } from "../utils.js";
 
 export const createProduct = async (req, res) => {
   try {
@@ -37,7 +35,7 @@ export const createProduct = async (req, res) => {
           };
         }
 
-        const pathToPhoto = "parameters/" + parameterPhotos[i].filename;
+        const pathToPhoto = parameterPhotos[i].path;
 
         return {
           value: parVal.value,
@@ -55,7 +53,7 @@ export const createProduct = async (req, res) => {
       basePrice,
       shortDescription,
       detailedDescription,
-      photo: "products/" + req.files["product"][0].filename,
+      photo: req.files["product"][0].path,
       category,
       parameters: parsedParameters,
     });
@@ -63,10 +61,6 @@ export const createProduct = async (req, res) => {
     await product.save();
     res.status(201).json(product);
   } catch (error) {
-    await deleteFile(
-      path.join(path.resolve(), "products", req.files["product"][0].filename)
-    );
-
     res.status(500).json({ message: error.message });
   }
 };
@@ -126,26 +120,27 @@ export const deleteProductById = async (req, res) => {
       return res.status(404).send({ message: "Товар не найден" });
     }
 
-    const mainPhotoPath = path.join(path.resolve(), "assets", product.photo);
+    await Product.deleteOne({ _id });
 
     if (product.parameters) {
       product.parameters.forEach((parameter) => {
         parameter.values.forEach(async (value) => {
           if (value.photo) {
-            const parameterPhotoPath = path.join(
-              path.resolve(),
-              "assets",
-              value.photo
-            );
-            await deleteFile(photoPath);
+            const parameterPhotoPublicId = value.photo
+              .split("/")
+              .pop()
+              .split(".")[0];
+
+            await deleteImageFromCloudinary("products", parameterPhotoPublicId);
           }
         });
       });
     }
 
-    await deleteFile(mainPhotoPath);
+    const mainPhotoPublicId = product.photo.split("/").pop().split(".")[0];
 
-    await Product.deleteOne({ _id });
+    await deleteImageFromCloudinary("products", mainPhotoPublicId);
+
     res.status(200).send({ message: "Продукт удалён" });
   } catch (error) {
     res.status(500).send({ message: error.message });
@@ -153,12 +148,8 @@ export const deleteProductById = async (req, res) => {
 };
 
 export const updateProduct = async (req, res) => {
-  const { _id } = req.params;
-  let newPhotoPath;
-
-  const paramsImagePaths = [];
-
   try {
+    const { _id } = req.params;
     const existingProduct = await Product.findById(_id);
     if (!existingProduct) {
       return res.status(404).send({ message: "Товар не найден" });
@@ -186,15 +177,14 @@ export const updateProduct = async (req, res) => {
         .status(400)
         .json({ message: "Пожалуйста, заполните все обязательные поля." });
     }
-
-    let photoPathToDelete = existingProduct.photo;
-
     // Обновляем остальные поля товара
     existingProduct.name = name;
     existingProduct.basePrice = basePrice;
     existingProduct.shortDescription = shortDescription;
     existingProduct.detailedDescription = detailedDescription;
     existingProduct.category = category;
+
+    const photoPathToDelete = existingProduct.photo;
 
     // Проверяем, были ли загружены новые фотографии параметров
     let paramsCounter = 0;
@@ -214,10 +204,7 @@ export const updateProduct = async (req, res) => {
             let pathToPhoto = parVal.photo;
 
             if (parVal.photoPreview) {
-              pathToPhoto =
-                "parameters/" +
-                req.files["parameterPhotos"][paramsCounter++].filename;
-              paramsImagePaths.push(pathToPhoto);
+              pathToPhoto = req.files["parameterPhotos"][paramsCounter++].path;
             }
 
             if (parVal.defaultValue) {
@@ -239,76 +226,27 @@ export const updateProduct = async (req, res) => {
       existingProduct.parameters = parsedParameters;
     }
 
+    let newPhotoPath;
+
     if (req.files["product"]) {
-      newPhotoPath = "products/" + req.files["product"][0].filename;
+      newPhotoPath = req.files["product"][0].path;
       existingProduct.photo = newPhotoPath;
     }
 
     await existingProduct.save();
 
     if (!!newPhotoPath) {
-      const deletePath = path.join(path.resolve(), "assets", photoPathToDelete);
-      await deleteFile(deletePath);
+      const mainPhotoPublicId = photoPathToDelete
+        .split("/")
+        .pop()
+        .split(".")[0];
+
+      await deleteImageFromCloudinary("products", mainPhotoPublicId);
     }
 
     res.status(200).json(existingProduct);
   } catch (error) {
     console.error("Ошибка при обновлении продукта:", error.message);
-
-    if (!!newPhotoPath) {
-      const deletePath = path.join(path.resolve(), "assets", newPhotoPath);
-      await deleteFile(deletePath);
-    }
-
-    for (const paramImagePath of paramsImagePaths) {
-      const deletePath = path.join(path.resolve(), "assets", paramImagePath);
-      await deleteFile(deletePath);
-    }
-
-    res.status(500).json({ message: "Внутренняя ошибка сервера" });
-  }
-};
-
-export const deleteUnusedPhotos = async (req, res) => {
-  const getAllPhotoPaths = async () => {
-    const products = await Product.find({});
-    const photoPaths = new Set();
-
-    products.forEach((product) => {
-      product.parameters.forEach((parameter) => {
-        parameter.values.forEach((value) => {
-          if (value.photo) {
-            photoPaths.add(value.photo);
-          }
-        });
-      });
-
-      photoPaths.add(product.photo);
-    });
-
-    return photoPaths;
-  };
-
-  try {
-    const photoPaths = await getAllPhotoPaths();
-    const parameterPhotosDir = path.resolve("assets/parameters");
-    const files = fs.readdirSync(parameterPhotosDir);
-    const unusedFiles = files.filter(
-      (file) => !photoPaths.has(`parameters/${file}`)
-    );
-
-    unusedFiles.forEach(async (file) => {
-      await deleteFile(path.join(parameterPhotosDir, file));
-    });
-
-    res.status(200).json({
-      message: `Найдено и удалено ${unusedFiles.length} ненужных файлов`,
-    });
-  } catch (error) {
-    console.error(
-      "Ошибка при проверке ненужных фотографий параметров:",
-      error.message
-    );
     res.status(500).json({ message: "Внутренняя ошибка сервера" });
   }
 };

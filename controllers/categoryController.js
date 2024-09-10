@@ -1,17 +1,16 @@
 import Category from "../models/Category.js";
-import path from "path";
-import { deleteFile } from "../utils.js";
+import { deleteImageFromCloudinary } from "../utils.js";
 
 export const createCategory = async (req, res) => {
+  const photoUrl = req.file.path;
   try {
     const { name, urlPath } = req.body;
-    const cleanedUrlPath = urlPath.startsWith("/") ? urlPath.slice(1) : urlPath;
 
     // Проверка на существование категории с таким же именем или urlPath
     const existingCategory = await Category.findOne({
       $or: [
         { name: new RegExp(`^${name}$`, "i") },
-        { urlPath: new RegExp(`^${cleanedUrlPath}$`, "i") },
+        { urlPath: new RegExp(`^${urlPath}$`, "i") },
       ],
     });
 
@@ -26,20 +25,25 @@ export const createCategory = async (req, res) => {
 
     const category = new Category({
       name,
-      photo: "categories/" + req.file.filename,
-      urlPath: cleanedUrlPath,
+      photo: req.file.path,
+      urlPath,
     });
 
     await category.save();
     res.status(201).send(category);
   } catch (error) {
+
+    if (photoUrl) {
+      const publicId = photoUrl.split("/").pop().split(".")[0];
+      await deleteImageFromCloudinary("categories", publicId);
+    }
+
     res.status(500).send({ message: "Ошибка сервера" });
   }
 };
 
 export const getCategories = async (req, res) => {
   try {
-    
     const categories = await Category.find();
     res.status(200).send(categories);
   } catch (error) {
@@ -66,7 +70,6 @@ export const updateCategory = async (req, res) => {
   try {
     const { name, urlPath } = req.body;
     const { _id } = req.params;
-    const cleanedUrlPath = urlPath.startsWith("/") ? urlPath.slice(1) : urlPath;
 
     const currentCategory = await Category.findById(_id);
 
@@ -76,37 +79,30 @@ export const updateCategory = async (req, res) => {
 
     // Проверка на существование категории с таким же именем или urlPath
     const existingCategory = await Category.findOne({
-      $or: [
-        { name: new RegExp(`^${name}$`, "i") },
-        { urlPath: new RegExp(`^${cleanedUrlPath}$`, "i") },
-      ],
+      $or: [{ name: new RegExp(`^${name}$`, "i") }],
     });
 
     if (existingCategory && existingCategory._id.toString() !== _id) {
       return res.status(400).send({
-        message:
-          existingCategory.name === name
-            ? "Категория с таким именем уже существует"
-            : "Категория с таким URL путем уже существует",
+        message: "Категория с таким именем уже существует",
       });
     }
 
-    const oldPhotoPath = path.join(
-      path.resolve(),
-      "assets",
-      currentCategory.photo
-    );
+    const oldPhotoPublicId = currentCategory.photo
+      .split("/")
+      .pop()
+      .split(".")[0];
 
     currentCategory.name = name;
-    currentCategory.urlPath = cleanedUrlPath;
+    currentCategory.urlPath = urlPath;
 
-    currentCategory.photo = req.file
-      ? "categories/" + req.file.filename
-      : currentCategory.photo;
+    currentCategory.photo = req.file ? req.file.path : currentCategory.photo;
 
     await currentCategory.save();
 
-    if (req.file) await deleteFile(oldPhotoPath);
+    if (req.file) {
+      await deleteImageFromCloudinary("categories", oldPhotoPublicId);
+    }
 
     res.status(201).send(currentCategory);
   } catch (error) {
@@ -127,8 +123,8 @@ export const deleteCategoryById = async (req, res) => {
     await Category.deleteOne({ _id });
 
     if (category.photo) {
-      const photoPath = path.join(path.resolve(), "assets", category.photo);
-      await deleteFile(photoPath);
+      const publicId = category.photo.split("/").pop().split(".")[0];
+      await deleteImageFromCloudinary("categories", publicId);
     }
     res.status(200).send({ message: "Категория удалена" });
   } catch (error) {

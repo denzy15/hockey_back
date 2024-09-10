@@ -1,64 +1,43 @@
 import multer from "multer";
-import path from "path";
-import fs from "fs";
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
+import {v2 as cloudinary} from 'cloudinary';
+import path from 'path'
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    let folder = "";
-    if (file.fieldname === "category") {
-      folder = "assets/categories";
-    } else if (file.fieldname === "product") {
-      folder = "assets/products";
-    } else if (file.fieldname.startsWith("parameterPhoto")) {
-      folder = "assets/parameters";
-    }
+// Конфигурация Cloudinary
 
-    if (!fs.existsSync(folder)) {
-      fs.mkdirSync(folder, { recursive: true });
-    }
-
-    cb(null, folder);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const filename = `${file.fieldname}-${uniqueSuffix}${path.extname(
-      file.originalname
-    )}`;
-    cb(null, filename);
-  },
-});
-
-const tempStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const tempFolder = "assets/temp";
-    if (!fs.existsSync(tempFolder)) {
-      fs.mkdirSync(tempFolder, { recursive: true });
-    }
-    cb(null, tempFolder);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const filename = `${file.fieldname}-${uniqueSuffix}${path.extname(
-      file.originalname
-    )}`;
-    cb(null, filename);
-  },
-});
-
+// Фильтр для проверки типа файла
 const fileFilter = (req, file, cb) => {
   const allowedTypes = ["image/jpeg", "image/png", "image/gif"];
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(
-      new Error(
-        "Неверный тип файла. Возможно загрузить только JPEG, PNG и GIF файлы."
-      ),
-      false
-    );
+    cb(new Error("Неверный тип файла. Возможно загрузить только JPEG, PNG и GIF файлы."), false);
   }
 };
 
-const upload = multer({ storage, fileFilter });
+// Функция для создания middleware
+export function uploadMiddleware(folderName) {
+  const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: (req, file) => {
+      const folderPath = `${folderName.trim()}`;
+      const fileExtension = path.extname(file.originalname).substring(1);
+      const publicId = `${file.fieldname}-${Date.now()}`;
 
-export default upload;
+      
+      return {
+        folder: folderPath,
+        public_id: publicId,
+        format: fileExtension,
+      };
+    },
+  });
+
+  return multer({
+    storage: storage,
+    limits: {
+      fileSize: 15 * 1024 * 1024, // 5MB
+    },
+    fileFilter,
+  });
+}
